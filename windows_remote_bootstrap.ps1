@@ -3,13 +3,46 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "=== Step 1: Install Tailscale ==="
+
+# Pre-clean temp files
+Remove-Item "$env:TEMP\tailscale-setup*.exe" -Force -ErrorAction SilentlyContinue
+
 if (-not (Get-Command tailscale -ErrorAction SilentlyContinue)) {
     Write-Host "Downloading Tailscale installer..."
-    $url = "https://tailscale.com/download/windows/tailscale-setup-latest.exe"
-    $out = "$env:TEMP\tailscale-setup.exe"
-    Invoke-WebRequest -Uri $url -OutFile $out
-    Start-Process -FilePath $out -ArgumentList "/quiet" -Wait
-    Write-Host "Tailscale installed."
+    
+    # Try winget first
+    $wingetAvailable = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetAvailable) {
+        Write-Host "Trying winget install..."
+        winget install --id Tailscale.Tailscale -e --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Tailscale installed via winget."
+            $tailscaleInstalled = $true
+        } else {
+            Write-Host "Winget install failed, falling back to manual download..."
+        }
+    }
+    
+    if (-not $tailscaleInstalled) {
+        $url = "https://tailscale.com/download/windows/tailscale-setup-latest.exe"
+        $uniqueName = "tailscale-setup-" + [guid]::NewGuid().ToString() + ".exe"
+        $out = Join-Path $env:TEMP $uniqueName
+        Write-Host "Downloading to $out ..."
+        Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+        
+        # Verify download
+        if (-not (Test-Path $out)) {
+            throw "Download failed: file not found at $out"
+        }
+        $fileSize = (Get-Item $out).Length
+        if ($fileSize -lt 1048576) {
+            Remove-Item $out -Force
+            throw "Downloaded file too small: $fileSize bytes. Corrupted installer."
+        }
+        
+        Start-Process -FilePath $out -ArgumentList "/quiet" -Wait
+        Write-Host "Tailscale installed."
+    }
 } else {
     Write-Host "Tailscale already installed."
 }
